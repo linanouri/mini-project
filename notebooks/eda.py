@@ -30,13 +30,13 @@ NUMERIC_COLS = [
 
 
 def _ensure_dirs() -> None:
-    # Keep reports deterministic and separate from source code.
+    # Dossiers séparés plutôt qu'un seul `outputs/` : les notes se versionnent, pas les images.
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _save_plots(df: pd.DataFrame) -> None:
-    # 1) Target distribution for class-imbalance inspection.
+    # 1) Barplot plutôt que pie chart : les hauteurs se comparent mieux que les angles.
     plt.figure(figsize=(12, 5))
     counts = df[TARGET].value_counts().sort_values(ascending=False)
     sns.barplot(x=counts.index, y=counts.values)
@@ -48,7 +48,8 @@ def _save_plots(df: pd.DataFrame) -> None:
     plt.savefig(FIG_DIR / "class_balance.png", dpi=140)
     plt.close()
 
-    # 2) Numeric feature correlations to spot redundancy and patterns.
+    # 2) Heatmap plutôt que pairplot : 11 variables → 121 sous-graphes illisibles.
+    #    coolwarm : divergente, centre à 0 → rouge = corrélation positive, bleu = négative.
     corr_df = df[NUMERIC_COLS].corr(numeric_only=True)
     plt.figure(figsize=(10, 8))
     sns.heatmap(corr_df, cmap="coolwarm", center=0, linewidths=0.4)
@@ -57,7 +58,7 @@ def _save_plots(df: pd.DataFrame) -> None:
     plt.savefig(FIG_DIR / "correlation_heatmap.png", dpi=140)
     plt.close()
 
-    # 3) Relationship plots on top classes for readability.
+    # 3) Top 6 classes seulement : au-delà, la légende devient illisible et les points se superposent.
     top_types = df[TARGET].value_counts().head(6).index.tolist()
     subset = df[df[TARGET].isin(top_types)].copy()
 
@@ -85,7 +86,7 @@ def _save_plots(df: pd.DataFrame) -> None:
 
 
 def _write_notes(raw_df: pd.DataFrame, clean_df: pd.DataFrame) -> None:
-    # Save grading-oriented rationale next to generated outputs.
+    # Markdown plutôt que print() : persiste après exécution et se versionne.
     lines = [
         "# Cleaning Decisions",
         "",
@@ -122,12 +123,12 @@ def main() -> None:
     print("\nDuplicate rows:", int(df.duplicated().sum()))
 
     clean_df = df.copy()
-    # Rows without labels cannot be used in supervised classification.
+    # Suppression plutôt qu'imputation de la classe majoritaire : imputer injecterait un biais.
     clean_df = clean_df.dropna(subset=[TARGET])
 
     for col in NUMERIC_COLS:
         clean_df[col] = pd.to_numeric(clean_df[col], errors="coerce")
-        # Median keeps the pipeline robust to skewed numeric distributions.
+        # Médiane plutôt que moyenne : robuste aux outliers (ex. Pokémon légendaire à 250 HP).
         clean_df[col] = clean_df[col].fillna(clean_df[col].median())
 
     # Guard against accidental duplicate pokemon records.
