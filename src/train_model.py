@@ -65,6 +65,8 @@ def main() -> None:
 
     results: dict[str, dict[str, float]] = {}
     preds_by_model: dict[str, list[int]] = {}
+    confusion_by_model: dict[str, list[list[int]]] = {}
+    importance_by_model: dict[str, dict[str, float]] = {}
 
     for name, model in models.items():
         model.fit(X_train_scaled, y_train)
@@ -86,18 +88,36 @@ def main() -> None:
         }
         preds_by_model[name] = preds.tolist()
 
+        cm = confusion_matrix(y_test, preds, labels=range(len(le.classes_)))
+        confusion_by_model[name] = cm.tolist()
+
+        if hasattr(model, "feature_importances_"):
+            importance_by_model[name] = {
+                feature: float(value)
+                for feature, value in zip(FEATURES, model.feature_importances_)
+            }
+        elif hasattr(model, "coef_"):
+            coefs = model.coef_
+            if coefs.ndim == 1:
+                magnitude = abs(coefs)
+            else:
+                magnitude = abs(coefs).mean(axis=0)
+            importance_by_model[name] = {
+                feature: float(value)
+                for feature, value in zip(FEATURES, magnitude)
+            }
+
     best_name = max(results, key=lambda n: results[n]["macro_f1"])
     best_model = models[best_name]
     best_preds = preds_by_model[best_name]
+    cm = confusion_by_model[best_name]
+    importances = importance_by_model.get(best_name, {})
 
-    cm = confusion_matrix(y_test, best_preds, labels=range(len(le.classes_)))
-
-    importances: dict[str, float] = {}
-    if best_name == "random_forest" and hasattr(best_model, "feature_importances_"):
-        importances = {
-            feature: float(value)
-            for feature, value in zip(FEATURES, best_model.feature_importances_)
-        }
+    best_macro_f1 = results[best_name]["macro_f1"]
+    justification = (
+        f"Deploy {best_name} because it achieved the highest macro-F1 ({best_macro_f1:.3f}) "
+        "on the held-out stratified test set; macro-F1 was prioritized over accuracy due to class imbalance."
+    )
 
     joblib.dump(best_model, MODEL_PATH)
     joblib.dump(scaler, SCALER_PATH)
@@ -106,9 +126,12 @@ def main() -> None:
     payload = {
         "all_model_results": results,
         "best_model": best_name,
-        "confusion_matrix": cm.tolist(),
+        "model_deployment_justification": justification,
+        "confusion_matrix": cm,
+        "confusion_matrices": confusion_by_model,
         "class_labels": le.classes_.tolist(),
         "feature_importance": importances,
+        "feature_importance_by_model": importance_by_model,
         "features": FEATURES,
         "n_rows": int(df.shape[0]),
         "train_rows": int(X_train.shape[0]),

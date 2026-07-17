@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import json
 from pathlib import Path
 
@@ -18,10 +19,12 @@ LE_PATH = Path("label_encoder.pkl")
 METRICS_PATH = Path("model_metrics.json")
 
 
+@st.cache_data
 def load_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
 
+@st.cache_data
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
@@ -35,11 +38,11 @@ def load_artifacts() -> tuple[object | None, object | None, object | None]:
 
 
 st.title("From Public API to a Deployed Classification Dashboard")
-st.caption("Dataset source: PokéAPI (no authentication required)")
+st.caption("Data source: https://pokeapi.co")
 
 section = st.sidebar.radio(
     "Navigate",
-    ["Overview", "Data", "EDA", "Model Evaluation", "Predict", "Deployment"],
+    ["Intro", "Data Overview", "EDA", "Model Performance", "Live Prediction", "Deployment"],
 )
 
 raw_df = load_csv(RAW_PATH)
@@ -47,42 +50,55 @@ clean_df = load_csv(CLEAN_PATH)
 metrics = load_json(METRICS_PATH)
 model, scaler, label_encoder = load_artifacts()
 
-if section == "Overview":
+if section == "Intro":
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Raw Rows", int(raw_df.shape[0]) if not raw_df.empty else 0)
     c2.metric("Clean Rows", int(clean_df.shape[0]) if not clean_df.empty else 0)
     c3.metric("Classes", int(clean_df["primary_type"].nunique()) if "primary_type" in clean_df.columns else 0)
-    c4.metric("Model", "Ready" if model is not None else "Missing")
+    c4.metric("Best Model", metrics.get("best_model", "n/a") if metrics else "n/a")
 
     st.markdown(
         """
-        This dashboard is built from an end-to-end pipeline:
-        1. Fetch paginated data from PokéAPI with detail requests per Pokemon.
-        2. Perform EDA and cleaning with documented decisions.
-        3. Train and compare two classifiers.
-        4. Persist artifacts and serve predictions interactively.
+        This project fetches paginated Pokemon data from a public API, cleans and explores it,
+        trains multiple classifiers to predict primary type from stats, and serves predictions in
+        an interactive app using saved model artifacts.
         """
     )
+    if metrics.get("model_deployment_justification"):
+        st.info(metrics["model_deployment_justification"])
 
-elif section == "Data":
-    st.subheader("Raw Dataset")
-    if raw_df.empty:
-        st.warning("Missing data/raw_data.csv. Run: python src/fetch_and_clean.py")
+elif section == "Data Overview":
+    if raw_df.empty and clean_df.empty:
+        st.warning("Missing raw/clean datasets. Run the pipeline scripts first.")
     else:
-        st.dataframe(raw_df.head(25), use_container_width=True)
-        st.write("Columns:", list(raw_df.columns))
+        t1, t2 = st.tabs(["Raw Data", "Clean Data"])
+        with t1:
+            if raw_df.empty:
+                st.warning("Missing data/raw_data.csv. Run: python src/fetch_and_clean.py")
+            else:
+                st.dataframe(raw_df.head(25), use_container_width=True)
+                st.write("Columns:", list(raw_df.columns))
+        with t2:
+            if clean_df.empty:
+                st.warning("Missing data/clean_data.csv. Run: python notebooks/eda.py")
+            else:
+                st.dataframe(clean_df.head(25), use_container_width=True)
 
-    st.subheader("Clean Dataset")
-    if clean_df.empty:
-        st.warning("Missing data/clean_data.csv. Run: python notebooks/eda.py")
-    else:
-        st.dataframe(clean_df.head(25), use_container_width=True)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Raw shape", f"{raw_df.shape[0]} x {raw_df.shape[1]}" if not raw_df.empty else "0 x 0")
+        c2.metric("Clean shape", f"{clean_df.shape[0]} x {clean_df.shape[1]}" if not clean_df.empty else "0 x 0")
+        c3.metric("Missing (raw)", int(raw_df.isna().sum().sum()) if not raw_df.empty else 0)
+        c4.metric("Missing (clean)", int(clean_df.isna().sum().sum()) if not clean_df.empty else 0)
 
 elif section == "EDA":
     if clean_df.empty:
         st.warning("Run cleaning first to view EDA charts.")
     else:
-        type_counts = clean_df["primary_type"].value_counts().reset_index()
+        all_types = sorted(clean_df["primary_type"].dropna().unique().tolist())
+        selected_types = st.sidebar.multiselect("Filter classes", all_types, default=all_types)
+        filtered_df = clean_df[clean_df["primary_type"].isin(selected_types)].copy() if selected_types else clean_df.copy()
+
+        type_counts = filtered_df["primary_type"].value_counts().reset_index()
         type_counts.columns = ["primary_type", "count"]
         st.subheader("Class Balance")
         st.plotly_chart(px.bar(type_counts, x="primary_type", y="count"), use_container_width=True)
@@ -100,12 +116,13 @@ elif section == "EDA":
             "special_defense",
             "speed",
         ]
-        st.subheader("Numeric Summary")
-        st.dataframe(clean_df[numeric_cols].describe().T, use_container_width=True)
+        corr = filtered_df[numeric_cols].corr(numeric_only=True)
+        st.subheader("Correlation Heatmap")
+        st.plotly_chart(px.imshow(corr, text_auto=True, aspect="auto", color_continuous_scale="RdBu", zmin=-1, zmax=1), use_container_width=True)
 
         st.subheader("Relationship Plots")
-        top_types = clean_df["primary_type"].value_counts().head(6).index.tolist()
-        subset = clean_df[clean_df["primary_type"].isin(top_types)]
+        top_types = filtered_df["primary_type"].value_counts().head(6).index.tolist()
+        subset = filtered_df[filtered_df["primary_type"].isin(top_types)]
         st.plotly_chart(
             px.scatter(subset, x="speed", y="defense", color="primary_type", title="Speed vs Defense"),
             use_container_width=True,
@@ -115,7 +132,7 @@ elif section == "EDA":
             use_container_width=True,
         )
 
-elif section == "Model Evaluation":
+elif section == "Model Performance":
     if not metrics:
         st.warning("Missing model_metrics.json. Run: python src/train_model.py")
     else:
@@ -123,16 +140,29 @@ elif section == "Model Evaluation":
         model_results = pd.DataFrame(metrics.get("all_model_results", {})).T
         st.dataframe(model_results, use_container_width=True)
 
-        st.write("Best model:", metrics.get("best_model", "n/a"))
+        model_names = list(metrics.get("all_model_results", {}).keys())
+        best_model = metrics.get("best_model", "n/a")
+        selected_model = st.selectbox(
+            "Select model",
+            model_names,
+            index=model_names.index(best_model) if best_model in model_names else 0,
+        )
+        st.write("Best model:", best_model)
+        if metrics.get("model_deployment_justification"):
+            st.write("Justification:", metrics["model_deployment_justification"])
 
-        cm = metrics.get("confusion_matrix", [])
+        cm_map = metrics.get("confusion_matrices", {})
+        cm = cm_map.get(selected_model, metrics.get("confusion_matrix", []))
         labels = metrics.get("class_labels", [])
         if cm and labels:
             cm_df = pd.DataFrame(cm, index=labels, columns=labels)
             st.subheader("Confusion Matrix")
-            st.dataframe(cm_df, use_container_width=True)
+            st.plotly_chart(px.imshow(cm_df, text_auto=True, aspect="auto", color_continuous_scale="Blues"), use_container_width=True)
 
-        importances = metrics.get("feature_importance", {})
+        importances = (metrics.get("feature_importance_by_model", {}) or {}).get(
+            selected_model,
+            metrics.get("feature_importance", {}),
+        )
         if importances:
             imp_df = pd.DataFrame(
                 sorted(importances.items(), key=lambda x: x[1], reverse=True),
@@ -141,7 +171,7 @@ elif section == "Model Evaluation":
             st.subheader("Feature Importance")
             st.plotly_chart(px.bar(imp_df, x="feature", y="importance"), use_container_width=True)
 
-elif section == "Predict":
+elif section == "Live Prediction":
     st.subheader("Predict Pokemon Primary Type")
     if model is None or scaler is None or label_encoder is None:
         st.warning("Missing model/scaler/label encoder artifacts. Run training first.")
@@ -176,21 +206,22 @@ elif section == "Predict":
             ]
         )
 
-        x_scaled = scaler.transform(input_df)
-        pred_encoded = model.predict(x_scaled)[0]
-        pred_label = label_encoder.inverse_transform([pred_encoded])[0]
+        if st.button("Predict"):
+            x_scaled = scaler.transform(input_df)
+            pred_encoded = model.predict(x_scaled)[0]
+            pred_label = label_encoder.inverse_transform([pred_encoded])[0]
 
-        st.success(f"Predicted primary type: {pred_label}")
+            st.success(f"Predicted primary type: {pred_label}")
 
-        if hasattr(model, "predict_proba"):
-            prob = model.predict_proba(x_scaled)[0]
-            prob_df = pd.DataFrame(
-                {
-                    "type": label_encoder.classes_,
-                    "probability": prob,
-                }
-            ).sort_values("probability", ascending=False)
-            st.plotly_chart(px.bar(prob_df.head(10), x="type", y="probability"), use_container_width=True)
+            if hasattr(model, "predict_proba"):
+                prob = model.predict_proba(x_scaled)[0]
+                prob_df = pd.DataFrame(
+                    {
+                        "type": label_encoder.classes_,
+                        "probability": prob,
+                    }
+                ).sort_values("probability", ascending=False)
+                st.plotly_chart(px.bar(prob_df.head(10), x="type", y="probability"), use_container_width=True)
 
 else:
     st.subheader("Deploy for Free")
@@ -207,3 +238,7 @@ else:
         - Read build logs for import or path errors.
         """
     )
+
+st.sidebar.markdown("---")
+st.sidebar.caption("Source: PokéAPI")
+st.sidebar.caption(f"Last updated: {date.today().isoformat()}")
