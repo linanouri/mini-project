@@ -8,6 +8,11 @@ This repository implements the full assignment pipeline end to end:
 4. Build a multi-section Streamlit dashboard
 5. Deploy to a free public hosting platform
 
+## Live Links
+
+- GitHub Repository: https://github.com/linanouri/mini-project
+- Streamlit App: https://mini-project-mzzhfscvhatkfr6hxztmcu.streamlit.app/
+
 ## API Choice
 
 - API: PokéAPI
