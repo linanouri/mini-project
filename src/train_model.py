@@ -43,6 +43,7 @@ def main() -> None:
     X = df[FEATURES].copy()
     y = df[TARGET].astype(str)
 
+    # Target labels are stored so predictions can be mapped back to class names.
     le = LabelEncoder()
     y_encoded = le.fit_transform(y)
 
@@ -55,6 +56,7 @@ def main() -> None:
     )
 
     scaler = StandardScaler()
+    # Fit on train only to avoid leakage into evaluation data.
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
@@ -88,9 +90,11 @@ def main() -> None:
         }
         preds_by_model[name] = preds.tolist()
 
+        # Always include all known classes in confusion matrix axes.
         cm = confusion_matrix(y_test, preds, labels=range(len(le.classes_)))
         confusion_by_model[name] = cm.tolist()
 
+        # Provide model-specific importance for dashboard interpretability.
         if hasattr(model, "feature_importances_"):
             importance_by_model[name] = {
                 feature: float(value)
@@ -123,6 +127,7 @@ def main() -> None:
     joblib.dump(scaler, SCALER_PATH)
     joblib.dump(le, LABEL_ENCODER_PATH)
 
+    # Single JSON payload keeps all evaluation artifacts app-friendly.
     payload = {
         "all_model_results": results,
         "best_model": best_name,

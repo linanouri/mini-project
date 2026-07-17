@@ -30,11 +30,13 @@ NUMERIC_COLS = [
 
 
 def _ensure_dirs() -> None:
+    # Keep reports deterministic and separate from source code.
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _save_plots(df: pd.DataFrame) -> None:
+    # 1) Target distribution for class-imbalance inspection.
     plt.figure(figsize=(12, 5))
     counts = df[TARGET].value_counts().sort_values(ascending=False)
     sns.barplot(x=counts.index, y=counts.values)
@@ -46,6 +48,7 @@ def _save_plots(df: pd.DataFrame) -> None:
     plt.savefig(FIG_DIR / "class_balance.png", dpi=140)
     plt.close()
 
+    # 2) Numeric feature correlations to spot redundancy and patterns.
     corr_df = df[NUMERIC_COLS].corr(numeric_only=True)
     plt.figure(figsize=(10, 8))
     sns.heatmap(corr_df, cmap="coolwarm", center=0, linewidths=0.4)
@@ -54,6 +57,7 @@ def _save_plots(df: pd.DataFrame) -> None:
     plt.savefig(FIG_DIR / "correlation_heatmap.png", dpi=140)
     plt.close()
 
+    # 3) Relationship plots on top classes for readability.
     top_types = df[TARGET].value_counts().head(6).index.tolist()
     subset = df[df[TARGET].isin(top_types)].copy()
 
@@ -81,6 +85,7 @@ def _save_plots(df: pd.DataFrame) -> None:
 
 
 def _write_notes(raw_df: pd.DataFrame, clean_df: pd.DataFrame) -> None:
+    # Save grading-oriented rationale next to generated outputs.
     lines = [
         "# Cleaning Decisions",
         "",
@@ -117,14 +122,18 @@ def main() -> None:
     print("\nDuplicate rows:", int(df.duplicated().sum()))
 
     clean_df = df.copy()
+    # Rows without labels cannot be used in supervised classification.
     clean_df = clean_df.dropna(subset=[TARGET])
 
     for col in NUMERIC_COLS:
         clean_df[col] = pd.to_numeric(clean_df[col], errors="coerce")
+        # Median keeps the pipeline robust to skewed numeric distributions.
         clean_df[col] = clean_df[col].fillna(clean_df[col].median())
 
+    # Guard against accidental duplicate pokemon records.
     clean_df = clean_df.drop_duplicates(subset=["id"]).reset_index(drop=True)
 
+    # Merge tiny classes so stratified splitting stays stable.
     rare_mask = clean_df[TARGET].map(clean_df[TARGET].value_counts()) < 3
     clean_df.loc[rare_mask, TARGET] = "other"
 

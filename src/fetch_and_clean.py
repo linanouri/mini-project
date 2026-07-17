@@ -14,6 +14,7 @@ RAW_PATH = DATA_DIR / "raw_data.csv"
 
 
 def _extract_stats(stats: list[dict[str, Any]]) -> dict[str, int | None]:
+    # Normalize variable-length stat payloads into fixed model-ready columns.
     stat_map = {
         "hp": None,
         "attack": None,
@@ -30,6 +31,7 @@ def _extract_stats(stats: list[dict[str, Any]]) -> dict[str, int | None]:
 
 
 def _extract_primary_type(types: list[dict[str, Any]]) -> str | None:
+    # Slot 1 is the primary type in PokéAPI's type ordering.
     if not types:
         return None
     sorted_types = sorted(types, key=lambda x: x.get("slot", 999))
@@ -44,6 +46,7 @@ def fetch_all_records(limit: int = 100, max_records: int = 300, sleep_seconds: f
     session = requests.Session()
 
     while next_url and len(records) < max_records:
+        # Step 1: fetch one page from the collection endpoint.
         page_response = session.get(next_url, timeout=30)
         page_response.raise_for_status()
         page_payload = page_response.json()
@@ -56,6 +59,7 @@ def fetch_all_records(limit: int = 100, max_records: int = 300, sleep_seconds: f
             if not detail_url:
                 continue
 
+            # Step 2: fetch detail payload for nested fields (stats/types).
             detail_response = session.get(detail_url, timeout=30)
             detail_response.raise_for_status()
             d = detail_response.json()
@@ -82,8 +86,10 @@ def fetch_all_records(limit: int = 100, max_records: int = 300, sleep_seconds: f
                 }
             )
 
+            # Small delay is polite for free public APIs.
             time.sleep(sleep_seconds)
 
+        # Continue until the API reports no next page.
         next_url = (page_payload.get("next") or "").strip() or None
 
     return records
@@ -92,6 +98,7 @@ def fetch_all_records(limit: int = 100, max_records: int = 300, sleep_seconds: f
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Re-running this script fully regenerates raw_data.csv.
     records = fetch_all_records(limit=100, max_records=300, sleep_seconds=0.2)
     df = pd.DataFrame(records)
     df.to_csv(RAW_PATH, index=False)

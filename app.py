@@ -21,16 +21,19 @@ METRICS_PATH = Path("model_metrics.json")
 
 @st.cache_data
 def load_csv(path: Path) -> pd.DataFrame:
+    # Cache dataframes to avoid disk reads on every interaction.
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
 
 @st.cache_data
 def load_json(path: Path) -> dict:
+    # Metrics/config are static between reruns until files change.
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
 @st.cache_resource
 def load_artifacts() -> tuple[object | None, object | None, object | None]:
+    # Cache heavy model objects once per user session.
     model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
     scaler = joblib.load(SCALER_PATH) if SCALER_PATH.exists() else None
     label_encoder = joblib.load(LE_PATH) if LE_PATH.exists() else None
@@ -51,6 +54,7 @@ metrics = load_json(METRICS_PATH)
 model, scaler, label_encoder = load_artifacts()
 
 if section == "Intro":
+    # High-level summary required by the project brief.
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Raw Rows", int(raw_df.shape[0]) if not raw_df.empty else 0)
     c2.metric("Clean Rows", int(clean_df.shape[0]) if not clean_df.empty else 0)
@@ -68,6 +72,7 @@ if section == "Intro":
         st.info(metrics["model_deployment_justification"])
 
 elif section == "Data Overview":
+    # Side-by-side raw vs clean previews and missing-value deltas.
     if raw_df.empty and clean_df.empty:
         st.warning("Missing raw/clean datasets. Run the pipeline scripts first.")
     else:
@@ -94,6 +99,7 @@ elif section == "EDA":
     if clean_df.empty:
         st.warning("Run cleaning first to view EDA charts.")
     else:
+        # Live filter lets users focus charts on selected classes.
         all_types = sorted(clean_df["primary_type"].dropna().unique().tolist())
         selected_types = st.sidebar.multiselect("Filter classes", all_types, default=all_types)
         filtered_df = clean_df[clean_df["primary_type"].isin(selected_types)].copy() if selected_types else clean_df.copy()
@@ -136,6 +142,7 @@ elif section == "Model Performance":
     if not metrics:
         st.warning("Missing model_metrics.json. Run: python src/train_model.py")
     else:
+        # Compare models, then inspect selected model diagnostics.
         st.subheader("Model Comparison (Macro Metrics)")
         model_results = pd.DataFrame(metrics.get("all_model_results", {})).T
         st.dataframe(model_results, use_container_width=True)
@@ -207,6 +214,7 @@ elif section == "Live Prediction":
         )
 
         if st.button("Predict"):
+            # Apply same preprocessing used during training before inference.
             x_scaled = scaler.transform(input_df)
             pred_encoded = model.predict(x_scaled)[0]
             pred_label = label_encoder.inverse_transform([pred_encoded])[0]
